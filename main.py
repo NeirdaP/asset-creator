@@ -2,7 +2,7 @@ import sys
 from qtpy import QtWidgets, QtCore, QtGui
 import ayon_api
 
-import icons
+import images
 
 ASSET_TYPES = ["CHAR", "BG", "CAM", "PROP"]
 
@@ -11,7 +11,7 @@ class MainWindow(QtWidgets.QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("David Assethoff")
-        print(icons.__path__)
+        print(images.__path__)
         self.resize(QtCore.QSize(320, 360))
         self.setLayout(QtWidgets.QVBoxLayout())
         self.connection = ayon_api.ServerAPI(
@@ -193,7 +193,7 @@ class MainWindow(QtWidgets.QWidget):
 
 def main():
     app = QtWidgets.QApplication(sys.argv)
-    app.setWindowIcon(QtGui.QIcon(f"{icons.__path__[0]}/david_assethoff.png"))
+    app.setWindowIcon(QtGui.QIcon(f"{images.__path__[0]}/david_assethoff.png"))
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
