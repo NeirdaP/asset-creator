@@ -12,8 +12,8 @@ class MainWindow(QtWidgets.QDialog):
         super().__init__(parent)
         self.setWindowTitle("David Assethoff")
 
-        #app_instance = get_ayon_qt_app()
-        #app_instance.setStyleSheet(ayon_core.style.load_stylesheet())
+        app_instance = get_ayon_qt_app()
+        app_instance.setStyleSheet(ayon_core.style.load_stylesheet())
 
         self.resize(QtCore.QSize(320, 360))
         self.setLayout(QtWidgets.QVBoxLayout())
@@ -59,6 +59,7 @@ class MainWindow(QtWidgets.QDialog):
         scroll_area.setWidgetResizable(True)
         scroll_area.setWidget(self.tasks_group)
         self.tasks_group.setLayout(QtWidgets.QVBoxLayout())
+        self.tasks_group.layout().setContentsMargins(5,20,5,20)
         self.project_changed()
 
         # Buttons
