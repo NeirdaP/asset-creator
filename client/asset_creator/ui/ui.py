@@ -6,8 +6,6 @@ from . import images
 from qtpy import QtWidgets, QtCore, QtGui
 from ayon_core.tools.utils import get_ayon_qt_app
 
-ASSET_TYPES = ["CHAR", "BG", "CAM", "PROP"]
-
 
 class MainWindow(QtWidgets.QDialog):
     def __init__(self, parent=None):
@@ -17,7 +15,6 @@ class MainWindow(QtWidgets.QDialog):
         #app_instance = get_ayon_qt_app()
         #app_instance.setStyleSheet(ayon_core.style.load_stylesheet())
 
-        print(images.__path__)
         self.resize(QtCore.QSize(320, 360))
         self.setLayout(QtWidgets.QVBoxLayout())
 
@@ -51,10 +48,10 @@ class MainWindow(QtWidgets.QDialog):
         type_label = QtWidgets.QLabel("Asset Type")
         type_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
         self.type_combo_box = QtWidgets.QComboBox()
-        self.type_combo_box.addItems(ASSET_TYPES)
 
         type_widget.layout().addWidget(type_label)
         type_widget.layout().addWidget(self.type_combo_box)
+        self.asset_types_to_parent_ids = {}
 
         # Tasks
         self.tasks_group = QtWidgets.QGroupBox("Tasks")
@@ -78,6 +75,23 @@ class MainWindow(QtWidgets.QDialog):
         self.layout().addWidget(type_widget)
         self.layout().addWidget(scroll_area)
         self.layout().addWidget(buttons_widget)
+
+        self.populate_available_asset_types()
+
+
+    def populate_available_asset_types(self):
+        """
+        Source the asset types from the project by checking for folders tagged as "asset_type"
+        This is kind of a workaround for not having asset types defined in anatomy or project structure
+        """
+        project_folders = ayon_api.get_folders(self.projects_combo_box.currentText(), fields=["name", "id", "tags"])
+        self.type_combo_box.clear()
+        self.asset_types_to_parent_ids.clear()
+        for folder in project_folders:
+            if "asset_type" in folder.get("tags"):
+                self.type_combo_box.addItem(folder.get("name"))
+                self.asset_types_to_parent_ids[folder.get("name")] = folder.get("id")
+
 
     def show_error_dialog(self, message):
         """
@@ -125,6 +139,7 @@ class MainWindow(QtWidgets.QDialog):
             task_widget.layout().addWidget(task_check_box)
             task_widget.layout().addWidget(task_label)
             self.tasks_group.layout().addWidget(task_widget)
+        self.populate_available_asset_types()
 
     def clear_task_types_widgets(self):
         """
@@ -150,6 +165,7 @@ class MainWindow(QtWidgets.QDialog):
                 project_name=self.projects_combo_box.currentText(),
                 name=asset_name,
                 folder_type="Asset",
+                parent_id=self.asset_types_to_parent_ids.get(self.type_combo_box.currentText()),
                 tags=[self.type_combo_box.currentText()]
             )
         except ayon_api.exceptions.HTTPRequestError as e:
