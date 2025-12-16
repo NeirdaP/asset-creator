@@ -6,18 +6,15 @@ from . import images
 from qtpy import QtWidgets, QtCore, QtGui
 from ayon_core.tools.utils import get_ayon_qt_app
 
-ASSET_TYPES = ["CHAR", "BG", "CAM", "PROP"]
-
 
 class MainWindow(QtWidgets.QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("David Assethoff")
 
-        #app_instance = get_ayon_qt_app()
-        #app_instance.setStyleSheet(ayon_core.style.load_stylesheet())
+        app_instance = get_ayon_qt_app()
+        app_instance.setStyleSheet(ayon_core.style.load_stylesheet())
 
-        print(images.__path__)
         self.resize(QtCore.QSize(320, 360))
         self.setLayout(QtWidgets.QVBoxLayout())
 
@@ -51,10 +48,10 @@ class MainWindow(QtWidgets.QDialog):
         type_label = QtWidgets.QLabel("Asset Type")
         type_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
         self.type_combo_box = QtWidgets.QComboBox()
-        self.type_combo_box.addItems(ASSET_TYPES)
 
         type_widget.layout().addWidget(type_label)
         type_widget.layout().addWidget(self.type_combo_box)
+        self.asset_types_to_parent_ids = {}
 
         # Tasks
         self.tasks_group = QtWidgets.QGroupBox("Tasks")
@@ -62,6 +59,7 @@ class MainWindow(QtWidgets.QDialog):
         scroll_area.setWidgetResizable(True)
         scroll_area.setWidget(self.tasks_group)
         self.tasks_group.setLayout(QtWidgets.QVBoxLayout())
+        self.tasks_group.layout().setContentsMargins(5,20,5,20)
         self.project_changed()
 
         # Buttons
@@ -78,6 +76,25 @@ class MainWindow(QtWidgets.QDialog):
         self.layout().addWidget(type_widget)
         self.layout().addWidget(scroll_area)
         self.layout().addWidget(buttons_widget)
+
+        self.populate_available_asset_types()
+
+
+    def populate_available_asset_types(self):
+        """
+        Get the asset types for the project by assuming anything under ASSETS is an asset type
+        """
+        project_folders = ayon_api.get_folders(self.projects_combo_box.currentText(), fields=["name", "id", "path"])
+        self.type_combo_box.clear()
+        self.asset_types_to_parent_ids.clear()
+
+        for folder in project_folders:
+            # Check if this folder path is directly under ASSETS
+            path_components = folder.get("path").strip("/").split("/")
+            if (len(path_components) > 1)  and path_components[-2]=="ASSETS":
+                self.type_combo_box.addItem(folder.get("name"))
+                self.asset_types_to_parent_ids[folder.get("name")] = folder.get("id")
+
 
     def show_error_dialog(self, message):
         """
@@ -125,6 +142,7 @@ class MainWindow(QtWidgets.QDialog):
             task_widget.layout().addWidget(task_check_box)
             task_widget.layout().addWidget(task_label)
             self.tasks_group.layout().addWidget(task_widget)
+        self.populate_available_asset_types()
 
     def clear_task_types_widgets(self):
         """
@@ -150,6 +168,7 @@ class MainWindow(QtWidgets.QDialog):
                 project_name=self.projects_combo_box.currentText(),
                 name=asset_name,
                 folder_type="Asset",
+                parent_id=self.asset_types_to_parent_ids.get(self.type_combo_box.currentText()),
                 tags=[self.type_combo_box.currentText()]
             )
         except ayon_api.exceptions.HTTPRequestError as e:
