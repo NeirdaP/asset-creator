@@ -82,14 +82,16 @@ class MainWindow(QtWidgets.QDialog):
 
     def populate_available_asset_types(self):
         """
-        Source the asset types from the project by checking for folders tagged as "asset_type"
-        This is kind of a workaround for not having asset types defined in anatomy or project structure
+        Get the asset types for the project by assuming anything under ASSETS is an asset type
         """
-        project_folders = ayon_api.get_folders(self.projects_combo_box.currentText(), fields=["name", "id", "tags"])
+        project_folders = ayon_api.get_folders(self.projects_combo_box.currentText(), fields=["name", "id", "path"])
         self.type_combo_box.clear()
         self.asset_types_to_parent_ids.clear()
+
         for folder in project_folders:
-            if "asset_type" in folder.get("tags"):
+            # Check if this folder path is directly under ASSETS
+            path_components = folder.get("path").strip("/").split("/")
+            if (len(path_components) > 1)  and path_components[-2]=="ASSETS":
                 self.type_combo_box.addItem(folder.get("name"))
                 self.asset_types_to_parent_ids[folder.get("name")] = folder.get("id")
 
