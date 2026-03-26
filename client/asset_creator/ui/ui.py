@@ -1,198 +1,199 @@
 import sys
-import ayon_core
-import ayon_api
-from . import images
 
-from qtpy import QtWidgets, QtCore, QtGui
+import ayon_api
+from ayon_core.style import load_stylesheet
 from ayon_core.tools.utils import get_ayon_qt_app
+from qtpy import QtWidgets, QtCore, QtGui
+
+from . import images
 
 ASSET_TYPES = ["CHAR", "BG", "CAM", "PROP"]
 
 
 class MainWindow(QtWidgets.QDialog):
+    """Dialog for creating assets in an Ayon project.
+
+    Provides a form to select a project, enter an asset name,
+    choose an asset type, and pick which tasks to create
+    alongside the asset folder.
+    """
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("David Assethoff")
+        self.setWindowIcon(
+            QtGui.QIcon(f"{images.__path__[0]}/david_assethoff.png")
+        )
 
-        #app_instance = get_ayon_qt_app()
-        #app_instance.setStyleSheet(ayon_core.style.load_stylesheet())
+        app_instance = get_ayon_qt_app()
+        app_instance.setStyleSheet(load_stylesheet())
 
-        print(images.__path__)
-        self.resize(QtCore.QSize(320, 360))
-        self.setLayout(QtWidgets.QVBoxLayout())
+        self.resize(320, 360)
+        self._task_checkboxes = []
 
-        # Project
-        project_names = ayon_api.get_project_names()
-
-        projects_widget = QtWidgets.QWidget()
-        projects_widget.setLayout(QtWidgets.QHBoxLayout())
-
-        projects_label = QtWidgets.QLabel("Project")
-        projects_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
-        self.projects_combo_box = QtWidgets.QComboBox()
-        self.projects_combo_box.addItems(project_names)
-        self.projects_combo_box.currentTextChanged.connect(self.project_changed)
-        projects_widget.layout().addWidget(projects_label)
-        projects_widget.layout().addWidget(self.projects_combo_box)
-
-        # Asset Name
-        asset_name_widget = QtWidgets.QWidget()
-        asset_name_widget.setLayout(QtWidgets.QHBoxLayout())
-        asset_name_label = QtWidgets.QLabel("Name")
-        asset_name_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
-        self.asset_name_line_edit = QtWidgets.QLineEdit()
-        self.asset_name_line_edit.setSizePolicy(QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Minimum)
-        asset_name_widget.layout().addWidget(asset_name_label)
-        asset_name_widget.layout().addWidget(self.asset_name_line_edit)
-
-        # Asset Type
-        type_widget = QtWidgets.QWidget()
-        type_widget.setLayout(QtWidgets.QHBoxLayout())
-        type_label = QtWidgets.QLabel("Asset Type")
-        type_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
-        self.type_combo_box = QtWidgets.QComboBox()
-        self.type_combo_box.addItems(ASSET_TYPES)
-
-        type_widget.layout().addWidget(type_label)
-        type_widget.layout().addWidget(self.type_combo_box)
-
-        # Tasks
-        self.tasks_group = QtWidgets.QGroupBox("Tasks")
-        scroll_area = QtWidgets.QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setWidget(self.tasks_group)
-        self.tasks_group.setLayout(QtWidgets.QVBoxLayout())
+        self._build_ui()
+        self._populate_projects()
         self.project_changed()
 
-        # Buttons
-        buttons_widget = QtWidgets.QWidget()
-        buttons_widget.setLayout(QtWidgets.QHBoxLayout())
-        buttons_widget.layout().addStretch()
+    def _build_ui(self):
+        """Build the dialog layout: form fields, scrollable task
+        checkboxes, and create button."""
+        main_layout = QtWidgets.QVBoxLayout(self)
+
+        # Form: Project, Name, Asset Type
+        form_layout = QtWidgets.QFormLayout()
+        form_layout.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
+
+        self.projects_combo_box = QtWidgets.QComboBox()
+        self.projects_combo_box.currentTextChanged.connect(
+            self.project_changed
+        )
+        form_layout.addRow("Project", self.projects_combo_box)
+
+        self.asset_name_line_edit = QtWidgets.QLineEdit()
+        form_layout.addRow("Asset Name", self.asset_name_line_edit)
+
+        self.type_combo_box = QtWidgets.QComboBox()
+        self.type_combo_box.addItems(ASSET_TYPES)
+        form_layout.addRow("Asset Type", self.type_combo_box)
+
+        main_layout.addLayout(form_layout)
+
+        # Tasks
+        tasks_label = QtWidgets.QLabel("Tasks")
+        main_layout.addWidget(tasks_label)
+
+        self._tasks_container = QtWidgets.QWidget()
+        self._tasks_layout = QtWidgets.QVBoxLayout(self._tasks_container)
+        self._tasks_layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop)
+
+        scroll_area = QtWidgets.QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setWidget(self._tasks_container)
+        main_layout.addWidget(scroll_area)
+
+        # Create button
+        buttons_layout = QtWidgets.QHBoxLayout()
+        buttons_layout.addStretch()
         self.add_asset_button = QtWidgets.QPushButton("Create Asset")
         self.add_asset_button.clicked.connect(self.create_asset)
-        self.add_asset_button.setSizePolicy(QtWidgets.QSizePolicy.Maximum, QtWidgets.QSizePolicy.Maximum)
-        buttons_widget.layout().addWidget(self.add_asset_button)
+        buttons_layout.addWidget(self.add_asset_button)
+        main_layout.addLayout(buttons_layout)
 
-        self.layout().addWidget(projects_widget)
-        self.layout().addWidget(asset_name_widget)
-        self.layout().addWidget(type_widget)
-        self.layout().addWidget(scroll_area)
-        self.layout().addWidget(buttons_widget)
+    def _populate_projects(self):
+        """Fetch project names from Ayon and populate the combo box.
 
-    def show_error_dialog(self, message):
+        Disables the create button if no projects are available.
         """
-        Shows an error dialog with the given message
-        Args:
-            message (str): message displayed in the dialog
-        """
-        msg_box = QtWidgets.QMessageBox(self)
-        msg_box.setIcon(QtWidgets.QMessageBox.Critical)
-        msg_box.setWindowTitle("Error")
-        msg_box.setText(message)
-        msg_box.setStandardButtons(QtWidgets.QMessageBox.Ok)
-        msg_box.exec()
-
-    def show_success_dialog(self, message):
-        """
-        Shows a success dialog with the given message
-        Args:
-            message (str): message displayed in the dialog
-        """
-        msg_box = QtWidgets.QMessageBox(self)
-        msg_box.setIcon(QtWidgets.QMessageBox.Information)
-        msg_box.setWindowTitle("Success")
-        msg_box.setText(message)
-        msg_box.setStandardButtons(QtWidgets.QMessageBox.Ok)
-        msg_box.exec()
+        project_names = list(ayon_api.get_project_names())
+        if project_names:
+            self.projects_combo_box.addItems(project_names)
+        else:
+            self.add_asset_button.setEnabled(False)
 
     def project_changed(self):
-        """
-        Triggered when current project in the project's combo box is changed
-        Updates the ui to remove old tasks and display available tasks from the new project
-        """
-        self.clear_task_types_widgets()
-        project_name = self.projects_combo_box.currentText()
-        project_settings = ayon_api.get_project(project_name)
-        task_names = [task_type.get("name") for task_type in project_settings.get("taskTypes")]
-        for task_name in task_names:
-            task_widget = QtWidgets.QWidget()
-            task_widget.setLayout(QtWidgets.QHBoxLayout())
-            task_check_box = QtWidgets.QCheckBox()
-            task_check_box.setSizePolicy(QtWidgets.QSizePolicy.Maximum, QtWidgets.QSizePolicy.Maximum)
-            task_label = QtWidgets.QLabel(task_name)
-            task_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
-            task_label.setSizePolicy(QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Minimum)
-            task_widget.layout().addWidget(task_check_box)
-            task_widget.layout().addWidget(task_label)
-            self.tasks_group.layout().addWidget(task_widget)
+        """Refresh the task checkboxes when the selected project changes.
 
-    def clear_task_types_widgets(self):
+        Fetches task types from the new project's settings and
+        creates a checkbox for each one inside the scroll area.
         """
-        Removes every widget under the task group box
-        """
-        while self.tasks_group.layout().count():
-            child = self.tasks_group.layout().takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
+        project_name = self.projects_combo_box.currentText()
+        if not project_name:
+            return
+
+        self._clear_tasks()
+
+        project_settings = ayon_api.get_project(project_name)
+        task_types = project_settings.get("taskTypes", [])
+
+        for task_type in task_types:
+            task_name = task_type.get("name")
+            if not task_name:
+                continue
+            checkbox = QtWidgets.QCheckBox(task_name)
+            self._tasks_layout.addWidget(checkbox)
+            self._task_checkboxes.append(checkbox)
+
+    def _clear_tasks(self):
+        """Remove all task checkboxes from the layout and the
+        internal tracking list."""
+        for checkbox in self._task_checkboxes:
+            checkbox.deleteLater()
+        self._task_checkboxes.clear()
+
+    def _get_checked_tasks(self):
+        """Return the names of all currently checked task checkboxes."""
+        return [
+            cb.text() for cb in self._task_checkboxes if cb.isChecked()
+        ]
 
     def create_asset(self):
+        """Create an asset folder in Ayon with the selected tasks.
+
+        Creates the folder first, then iterates over checked tasks.
+        If some tasks fail, the asset is still created and a partial
+        error is reported to the user.
         """
-        Creates asset in ayon, with all checked tasks
-        Shows a dialog to display if it was a success or a failure
-        """
-        asset_name = self.asset_name_line_edit.text()
+        asset_name = self.asset_name_line_edit.text().strip()
         if not asset_name:
-            self.show_error_dialog("Asset name is empty")
+            self._show_error("Asset name is empty")
             return
-        tasks = self.get_checked_tasks()
+
+        project_name = self.projects_combo_box.currentText()
+        tasks = self._get_checked_tasks()
+
         try:
             folder_id = ayon_api.create_folder(
-                project_name=self.projects_combo_box.currentText(),
+                project_name=project_name,
                 name=asset_name,
                 folder_type="Asset",
-                tags=[self.type_combo_box.currentText()]
+                tags=[self.type_combo_box.currentText()],
             )
         except ayon_api.exceptions.HTTPRequestError as e:
-            # Handle all exceptions here with the status code
-            message = str(e)
-            status_code = e.response.status_code
-
-            if status_code == 409:
-                message = f"Asset '{asset_name}' already exists"
-
-            self.show_error_dialog(message)
+            if e.response.status_code == 409:
+                self._show_error(
+                    f"Asset '{asset_name}' already exists"
+                )
+            else:
+                self._show_error(str(e))
             return
+
+        failed_tasks = []
         for task in tasks:
-            ayon_api.create_task(
-                project_name=self.projects_combo_box.currentText(),
-                name=task,
-                task_type=task,
-                folder_id=folder_id
+            try:
+                ayon_api.create_task(
+                    project_name=project_name,
+                    name=task,
+                    task_type=task,
+                    folder_id=folder_id,
+                )
+            except ayon_api.exceptions.HTTPRequestError:
+                failed_tasks.append(task)
+
+        if failed_tasks:
+            self._show_error(
+                f"Asset '{asset_name}' created but these tasks "
+                f"failed: {', '.join(failed_tasks)}"
             )
-        self.show_success_dialog(f"Successfully created asset '{asset_name}'")
+        else:
+            self._show_success(
+                f"Successfully created asset '{asset_name}'"
+            )
 
-    def get_checked_tasks(self):
-        """
-        Gets all checked tasks in the tasks group box
+    def _show_error(self, message):
+        """Display an error dialog with the given message."""
+        QtWidgets.QMessageBox.critical(self, "Error", message)
 
-        Returns:
-            list(str): Names of checked tasks
-        """
-        tasks = []
-        for i in range(self.tasks_group.layout().count()):
-            item = self.tasks_group.layout().itemAt(i)
-            widget = item.widget()
-            if widget:
-                checkbox_item = widget.layout().itemAt(0)
-                label_item = widget.layout().itemAt(1)
-                if checkbox_item.widget().isChecked():
-                    tasks.append(label_item.widget().text())
-        return tasks
+    def _show_success(self, message):
+        """Display a success dialog with the given message."""
+        QtWidgets.QMessageBox.information(self, "Success", message)
 
 
 def main():
     app = QtWidgets.QApplication(sys.argv)
-    app.setWindowIcon(QtGui.QIcon(f"{images.__path__[0]}/david_assethoff.png"))
+    app.setWindowIcon(
+        QtGui.QIcon(f"{images.__path__[0]}/david_assethoff.png")
+    )
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
