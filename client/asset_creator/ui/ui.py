@@ -2,7 +2,6 @@ import sys
 
 import ayon_api
 from ayon_core.style import load_stylesheet
-from ayon_core.tools.utils import get_ayon_qt_app
 from qtpy import QtWidgets, QtCore, QtGui
 
 from . import images
@@ -25,8 +24,7 @@ class MainWindow(QtWidgets.QDialog):
             QtGui.QIcon(f"{images.__path__[0]}/david_assethoff.png")
         )
 
-        app_instance = get_ayon_qt_app()
-        app_instance.setStyleSheet(load_stylesheet())
+        self.setStyleSheet(load_stylesheet())
 
         self.resize(320, 360)
         self._task_checkboxes = []
