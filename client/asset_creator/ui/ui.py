@@ -6,7 +6,89 @@ from qtpy import QtWidgets, QtCore, QtGui
 
 from . import images
 
-ASSET_TYPES = ["CHAR", "BG", "CAM", "PROP"]
+
+class ImageDropZone(QtWidgets.QLabel):
+    """Drop zone widget that accepts image files via drag & drop or click.
+
+    Displays a preview of the dropped image or a placeholder message.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._image_path = None
+        self.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.setMinimumHeight(100)
+        self.setMaximumHeight(120)
+        self.setAcceptDrops(True)
+        self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        self.setStyleSheet(
+            "QLabel {"
+            "  border: 2px dashed rgb(120, 130, 140);"
+            "  border-radius: 5px;"
+            "  color: rgb(160, 170, 180);"
+            "  font-size: 11px;"
+            "}"
+        )
+        self._set_placeholder()
+
+    def _set_placeholder(self):
+        """Display the default placeholder text."""
+        self.setText("Drop an image here\nor click to browse")
+        self._image_path = None
+
+    def image_path(self):
+        """Return the path of the currently loaded image, or None."""
+        return self._image_path
+
+    def _load_image(self, path):
+        """Load and display an image from the given file path."""
+        pixmap = QtGui.QPixmap(path)
+        if pixmap.isNull():
+            return
+        self._image_path = path
+        scaled = pixmap.scaled(
+            self.size(),
+            QtCore.Qt.AspectRatioMode.KeepAspectRatio,
+            QtCore.Qt.TransformationMode.SmoothTransformation,
+        )
+        self.setPixmap(scaled)
+
+    def mousePressEvent(self, event):
+        """Open a file dialog to select an image on click."""
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Select Image", "",
+            "Images (*.png *.jpg *.jpeg *.bmp *.gif *.webp)"
+        )
+        if path:
+            self._load_image(path)
+
+    def dragEnterEvent(self, event):
+        """Accept the drag if it contains image file URLs."""
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        """Load the first dropped image file."""
+        for url in event.mimeData().urls():
+            path = url.toLocalFile()
+            if path:
+                self._load_image(path)
+                event.acceptProposedAction()
+                return
+        event.ignore()
+
+    def clear(self):
+        """Reset the drop zone to its placeholder state."""
+        super().clear()
+        self._set_placeholder()
 
 
 class MainWindow(QtWidgets.QDialog):
@@ -49,11 +131,19 @@ class MainWindow(QtWidgets.QDialog):
         form_layout.addRow("Project", self.projects_combo_box)
 
         self.asset_name_line_edit = QtWidgets.QLineEdit()
+        self.asset_name_line_edit.setPlaceholderText("Name of the asset...")
         form_layout.addRow("Asset Name", self.asset_name_line_edit)
 
         self.type_combo_box = QtWidgets.QComboBox()
-        self.type_combo_box.addItems(ASSET_TYPES)
         form_layout.addRow("Asset Type", self.type_combo_box)
+
+        self.description_text_edit = QtWidgets.QTextEdit()
+        self.description_text_edit.setPlaceholderText("Optional description...")
+        self.description_text_edit.setMaximumHeight(60)
+        form_layout.addRow("Description", self.description_text_edit)
+
+        self.image_drop_zone = ImageDropZone()
+        form_layout.addRow("Thumbnail", self.image_drop_zone)
 
         main_layout.addLayout(form_layout)
 
@@ -102,6 +192,15 @@ class MainWindow(QtWidgets.QDialog):
         self._clear_tasks()
 
         project_settings = ayon_api.get_project(project_name)
+
+        # Refresh asset types from project folder types
+        folder_types = project_settings.get("folderTypes", [])
+        self.type_combo_box.clear()
+        for folder_type in folder_types:
+            name = folder_type.get("name")
+            if name:
+                self.type_combo_box.addItem(name)
+
         task_types = project_settings.get("taskTypes", [])
 
         for task_type in task_types:
@@ -139,13 +238,31 @@ class MainWindow(QtWidgets.QDialog):
 
         project_name = self.projects_combo_box.currentText()
         tasks = self._get_checked_tasks()
+        description = self.description_text_edit.toPlainText().strip()
+
+        attrib = {}
+        if description:
+            attrib["description"] = description
+
+        # Upload thumbnail first to get its ID
+        thumbnail_id = None
+        thumbnail_path = self.image_drop_zone.image_path()
+        if thumbnail_path:
+            try:
+                thumbnail_id = ayon_api.create_thumbnail(
+                    project_name=project_name,
+                    src_filepath =thumbnail_path,
+                )
+            except Exception as e:
+                self._show_error(f"Failed to upload thumbnail: {e}")
 
         try:
             folder_id = ayon_api.create_folder(
                 project_name=project_name,
                 name=asset_name,
-                folder_type="Asset",
-                tags=[self.type_combo_box.currentText()],
+                folder_type=self.type_combo_box.currentText(),
+                attrib=attrib,
+                thumbnail_id=thumbnail_id,
             )
         except ayon_api.exceptions.HTTPRequestError as e:
             if e.response.status_code == 409:
