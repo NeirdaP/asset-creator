@@ -6,6 +6,85 @@ from qtpy import QtWidgets, QtCore, QtGui
 
 from . import images
 
+DEFAULT_FOLDER_TYPES = {"Folder", "Library", "Asset", "Episode", "Sequence", "Shot"}
+
+
+class TreeSelectorButton(QtWidgets.QPushButton):
+    """Button that opens a popup with a QTreeWidget for folder selection.
+
+    Displays the selected folder name on the button. Clicking opens
+    a dropdown-like popup with the full folder hierarchy.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._selected_id = None
+        self._selected_name = "/ (root)"
+        self.setText(self._selected_name)
+        self.clicked.connect(self._show_popup)
+
+        self._popup = QtWidgets.QFrame(
+            self, QtCore.Qt.WindowType.Popup
+        )
+        self._popup.setFrameShape(QtWidgets.QFrame.Shape.StyledPanel)
+        popup_layout = QtWidgets.QVBoxLayout(self._popup)
+        popup_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.tree = QtWidgets.QTreeWidget()
+        self.tree.setHeaderHidden(True)
+        self.tree.setRootIsDecorated(True)
+        self.tree.itemClicked.connect(self._on_item_clicked)
+        popup_layout.addWidget(self.tree)
+
+        self._popup.setMaximumHeight(300)
+
+    def _show_popup(self):
+        """Show the tree popup below the button, matching its width."""
+        pos = self.mapToGlobal(self.rect().bottomLeft())
+        self._popup.move(pos)
+        self._popup.setFixedWidth(self.width())
+        self._popup.show()
+
+    def _on_item_clicked(self, item, column):
+        """Select the clicked item and close the popup."""
+        self._selected_id = item.data(
+            0, QtCore.Qt.ItemDataRole.UserRole
+        )
+        self._selected_name = item.text(0)
+        self.setText(self._selected_name)
+        self._popup.hide()
+
+    def selected_folder_id(self):
+        """Return the folder ID of the currently selected item."""
+        return self._selected_id
+
+    def set_selected(self, folder_id, name):
+        """Set the currently selected folder."""
+        self._selected_id = folder_id
+        self._selected_name = name
+        self.setText(name)
+
+    def select_by_id(self, folder_id):
+        """Select the tree item matching the given folder ID.
+
+        Args:
+            folder_id: The folder ID to select, or None for root.
+        """
+        if folder_id is None:
+            self.set_selected(None, "/ (root)")
+            return
+
+        iterator = QtWidgets.QTreeWidgetItemIterator(self.tree)
+        while iterator.value():
+            item = iterator.value()
+            if item.data(0, QtCore.Qt.ItemDataRole.UserRole) == folder_id:
+                self.set_selected(folder_id, item.text(0))
+                self.tree.setCurrentItem(item)
+                return
+            iterator += 1
+
+        self.set_selected(None, "/ (root)")
+
 
 class ImageDropZone(QtWidgets.QLabel):
     """Drop zone widget that accepts image files via drag & drop or click.
@@ -97,7 +176,12 @@ class MainWindow(QtWidgets.QDialog):
     Provides a form to select a project, enter an asset name,
     choose an asset type, and pick which tasks to create
     alongside the asset folder.
+
+    Signals:
+        asset_created: Emitted when an asset is successfully created.
     """
+
+    asset_created = QtCore.Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -110,6 +194,8 @@ class MainWindow(QtWidgets.QDialog):
 
         self.resize(320, 360)
         self._task_checkboxes = []
+        # Maps folder_type -> parent_id (deduced from existing project structure)
+        self._parent_ids_by_type = {}
 
         self._build_ui()
         self._populate_projects()
@@ -135,7 +221,13 @@ class MainWindow(QtWidgets.QDialog):
         form_layout.addRow("Asset Name", self.asset_name_line_edit)
 
         self.type_combo_box = QtWidgets.QComboBox()
+        self.type_combo_box.currentTextChanged.connect(
+            self._on_type_changed
+        )
         form_layout.addRow("Asset Type", self.type_combo_box)
+
+        self.parent_folder_combo = TreeSelectorButton()
+        form_layout.addRow("Parent Folder", self.parent_folder_combo)
 
         self.description_text_edit = QtWidgets.QTextEdit()
         self.description_text_edit.setPlaceholderText("Optional description...")
@@ -160,8 +252,38 @@ class MainWindow(QtWidgets.QDialog):
         scroll_area.setWidget(self._tasks_container)
         main_layout.addWidget(scroll_area)
 
-        # Create button
+        # Notification label above the create button
+        self.notification_label = QtWidgets.QLabel()
+        self.notification_label.setWordWrap(True)
+        self.notification_label.setAlignment(
+            QtCore.Qt.AlignmentFlag.AlignCenter
+        )
+        self.notification_label.setStyleSheet(
+            "QLabel {"
+            "  color: rgb(255, 150, 50);"
+            "  font-size: 11px;"
+            "  padding: 6px 10px;"
+            "  background-color: rgba(255, 150, 50, 30);"
+            "  border: 1px solid rgb(255, 150, 50);"
+            "  border-radius: 4px;"
+            "}"
+        )
+        self.notification_label.hide()
+        main_layout.addWidget(self.notification_label)
+
+        # Refresh and Create buttons
         buttons_layout = QtWidgets.QHBoxLayout()
+        self.refresh_button = QtWidgets.QPushButton()
+        self.refresh_button.setIcon(
+            QtGui.QIcon(f"{images.__path__[0]}/refresh.png")
+        )
+        self.refresh_button.setToolTip("Refresh")
+        self.refresh_button.setFlat(True)
+        self.refresh_button.setCursor(
+            QtCore.Qt.CursorShape.PointingHandCursor
+        )
+        self.refresh_button.clicked.connect(self.project_changed)
+        buttons_layout.addWidget(self.refresh_button)
         buttons_layout.addStretch()
         self.add_asset_button = QtWidgets.QPushButton("Create Asset")
         self.add_asset_button.clicked.connect(self.create_asset)
@@ -193,13 +315,37 @@ class MainWindow(QtWidgets.QDialog):
 
         project_settings = ayon_api.get_project(project_name)
 
-        # Refresh asset types from project folder types
+        # Refresh asset types from project folder types, excluding defaults
         folder_types = project_settings.get("folderTypes", [])
         self.type_combo_box.clear()
-        for folder_type in folder_types:
+        for folder_type in sorted(folder_types, key=lambda f: f.get("name", "")):
             name = folder_type.get("name")
-            if name:
+            if name and name not in DEFAULT_FOLDER_TYPES:
                 self.type_combo_box.addItem(name)
+
+        if self.type_combo_box.count() == 0:
+            self.type_combo_box.addItem("No asset types found")
+            self.type_combo_box.setEnabled(False)
+            self.add_asset_button.setEnabled(False)
+            self.notification_label.setText(
+                "No custom asset types found for this project. "
+                "Please add asset types in the project settings."
+            )
+            self.notification_label.show()
+        else:
+            self.type_combo_box.setEnabled(True)
+            self.add_asset_button.setEnabled(True)
+            self.notification_label.hide()
+
+        # Fetch all folders with attribs to read containedAssetType
+        all_folders = list(ayon_api.get_folders(
+            project_name=project_name,
+            fields=["id", "name", "folderType", "parentId",
+                     "attrib.containedAssetType"],
+        ))
+        self._parent_ids_by_type = self._detect_parent_folders(all_folders)
+        self._populate_parent_folders(all_folders)
+        self._on_type_changed()
 
         task_types = project_settings.get("taskTypes", [])
 
@@ -223,6 +369,77 @@ class MainWindow(QtWidgets.QDialog):
         return [
             cb.text() for cb in self._task_checkboxes if cb.isChecked()
         ]
+
+    @staticmethod
+    def _detect_parent_folders(all_folders):
+        """Detect parent folders using the 'containedAssetType' custom attribute.
+
+        Looks for folders that declare which asset types they contain.
+        If no folder declares a given type, the asset will default to root.
+
+        Args:
+            all_folders: List of folder dicts from ayon_api.get_folders.
+
+        Returns:
+            Dict mapping folder_type (str) -> parent_id (str).
+        """
+        result = {}
+        for folder in all_folders:
+            attrib = folder.get("attrib") or {}
+            contained_type = attrib.get("containedAssetType")
+            if contained_type and contained_type not in result:
+                result[contained_type] = folder["id"]
+
+        return result
+
+    def _populate_parent_folders(self, all_folders):
+        """Populate the parent folder tree with the project's folder hierarchy.
+
+        Builds a tree structure matching the Ayon folder hierarchy.
+        Each item stores the folder ID as UserRole data.
+        """
+        tree = self.parent_folder_combo.tree
+        tree.clear()
+
+        # Add root item
+        root_item = QtWidgets.QTreeWidgetItem(["/ (root)"])
+        root_item.setData(0, QtCore.Qt.ItemDataRole.UserRole, None)
+        tree.addTopLevelItem(root_item)
+
+        # Build tree from folder hierarchy
+        id_to_widget = {}
+        sorted_folders = sorted(all_folders, key=lambda f: f["name"])
+
+        for folder in sorted_folders:
+            folder_id = folder["id"]
+            name = folder["name"]
+            folder_type = folder.get("folderType", "")
+            display = f"{name}  ({folder_type})" if folder_type else name
+
+            item = QtWidgets.QTreeWidgetItem([display])
+            item.setData(0, QtCore.Qt.ItemDataRole.UserRole, folder_id)
+            id_to_widget[folder_id] = item
+
+        # Parent each item under its parent widget
+        for folder in sorted_folders:
+            folder_id = folder["id"]
+            parent_id = folder.get("parentId")
+            item = id_to_widget[folder_id]
+
+            parent_widget = id_to_widget.get(parent_id)
+            if parent_widget:
+                parent_widget.addChild(item)
+            else:
+                root_item.addChild(item)
+
+        root_item.setExpanded(True)
+        self.parent_folder_combo.set_selected(None, "/ (root)")
+
+    def _on_type_changed(self):
+        """Pre-select the detected parent folder when the asset type changes."""
+        folder_type = self.type_combo_box.currentText()
+        parent_id = self._parent_ids_by_type.get(folder_type)
+        self.parent_folder_combo.select_by_id(parent_id)
 
     def create_asset(self):
         """Create an asset folder in Ayon with the selected tasks.
@@ -256,11 +473,16 @@ class MainWindow(QtWidgets.QDialog):
             except Exception as e:
                 self._show_error(f"Failed to upload thumbnail: {e}")
 
+        # Get parent folder from tree combo (user may have changed it)
+        folder_type = self.type_combo_box.currentText()
+        parent_id = self.parent_folder_combo.selected_folder_id()
+
         try:
             folder_id = ayon_api.create_folder(
                 project_name=project_name,
                 name=asset_name,
-                folder_type=self.type_combo_box.currentText(),
+                folder_type=folder_type,
+                parent_id=parent_id,
                 attrib=attrib,
                 thumbnail_id=thumbnail_id,
             )
@@ -294,6 +516,9 @@ class MainWindow(QtWidgets.QDialog):
             self._show_success(
                 f"Successfully created asset '{asset_name}'"
             )
+
+        # Notify parent that an asset was created (even if some tasks failed)
+        self.asset_created.emit()
 
     def _show_error(self, message):
         """Display an error dialog with the given message."""
