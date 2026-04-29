@@ -2,6 +2,7 @@ import sys
 
 import ayon_api
 from ayon_core.style import load_stylesheet
+from ayon_core.settings import get_project_settings
 from qtpy import QtWidgets, QtCore, QtGui
 
 from . import images
@@ -208,17 +209,16 @@ class MainWindow(QtWidgets.QDialog):
         self._clear_user_inputs()
         self._clear_tasks()
 
-        project_settings = ayon_api.get_project(project_name)
+        project_anatomy = ayon_api.get_project(project_name)
+        asset_creator_settings = get_project_settings(project_name).get("asset_creator")
 
         # Refresh asset types from project folder types
-        folder_types = project_settings.get("folderTypes", [])
         self.type_combo_box.clear()
-        for folder_type in folder_types:
-            name = folder_type.get("name")
-            if name:
-                self.type_combo_box.addItem(name)
+        available_folder_types = [item["name"] for item in asset_creator_settings.get("folder_types")]
+        for folder_type in available_folder_types:
+            self.type_combo_box.addItem(folder_type)
 
-        task_types = project_settings.get("taskTypes", [])
+        task_types = project_anatomy.get("taskTypes", [])
 
         for task_type in task_types:
             task_name = task_type.get("name")
@@ -240,6 +240,28 @@ class MainWindow(QtWidgets.QDialog):
         return [
             cb.text() for cb in self._task_checkboxes if cb.isChecked()
         ]
+
+    def _get_parent_id_by_folder_type(self, folder_type: str):
+        """Get parent id from correspondance defined in project settings
+        """
+        project_name = self.projects_combo_box.currentText()
+        folder_types = get_project_settings(project_name).get("asset_creator").get("folder_types")
+
+        parent_folder_path = next(iter([
+                    folder["parent_folder"]
+                    for folder in folder_types
+                    if folder["name"] == folder_type
+            ]),None
+        )
+        if not parent_folder_path:
+            self._show_error(
+                (f"Can't find corresponding folder path for folders of type '{folder_type}'."
+                "Please check that this addon's projects settings are correctly defined.")
+            )
+            raise Exception
+
+        parent_folder = ayon_api.get_folder_by_path(project_name, parent_folder_path, fields=["id"])
+        return parent_folder.get('id')
 
     def create_asset(self):
         """Create an asset folder in Ayon with the selected tasks.
@@ -273,11 +295,13 @@ class MainWindow(QtWidgets.QDialog):
             except Exception as e:
                 self._show_error(f"Failed to upload thumbnail: {e}")
 
+        folder_type = self.type_combo_box.currentText()
         try:
             folder_id = ayon_api.create_folder(
                 project_name=project_name,
                 name=asset_name,
-                folder_type=self.type_combo_box.currentText(),
+                folder_type=folder_type,
+                parent_id=self._get_parent_id_by_folder_type(folder_type),
                 attrib=attrib,
                 thumbnail_id=thumbnail_id,
             )

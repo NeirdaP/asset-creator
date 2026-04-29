@@ -6,7 +6,7 @@ name = "asset_creator"
 title = "Asset Creator"
 
 # Required: Valid semantic version (https://semver.org/)
-version = "1.0.0"
+version = "1.1.0"
 
 # Name of client code directory imported in AYON launcher
 # - do not specify if there is no client code
