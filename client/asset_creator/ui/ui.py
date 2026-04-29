@@ -205,6 +205,7 @@ class MainWindow(QtWidgets.QDialog):
         if not project_name:
             return
 
+        self._clear_user_inputs()
         self._clear_tasks()
 
         project_settings = ayon_api.get_project(project_name)
@@ -310,6 +311,7 @@ class MainWindow(QtWidgets.QDialog):
             self._show_success(
                 f"Successfully created asset '{asset_name}'"
             )
+            self._clear_user_inputs()
 
         # Notify parent that an asset was created (even if some tasks failed)
         self.asset_created.emit()
@@ -322,6 +324,18 @@ class MainWindow(QtWidgets.QDialog):
         """Display a success dialog with the given message."""
         QtWidgets.QMessageBox.information(self, "Success", message)
 
+    def _clear_user_inputs(self):
+        """Clear user-entered data"""
+        self.asset_name_line_edit.clear()
+        self.description_text_edit.clear()
+        self.type_combo_box.clearEditText()
+        self.image_drop_zone.clear()
+        for checkbox in self._task_checkboxes:
+            checkbox.setChecked(False)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._clear_user_inputs()
 
 def main():
     app = QtWidgets.QApplication(sys.argv)
