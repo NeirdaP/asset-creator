@@ -141,6 +141,7 @@ class MainWindow(QtWidgets.QDialog):
         form_layout.addRow("Asset Name", self.asset_name_line_edit)
 
         self.type_combo_box = QtWidgets.QComboBox()
+        self.type_combo_box.currentTextChanged.connect(self.folder_type_changed)
         form_layout.addRow("Asset Type", self.type_combo_box)
 
         self.description_text_edit = QtWidgets.QTextEdit()
@@ -200,6 +201,22 @@ class MainWindow(QtWidgets.QDialog):
         else:
             self.add_asset_button.setEnabled(False)
 
+    def folder_type_changed(self):
+        """
+        Select default task types for the new folder type found in the project settings
+        """
+        settings = get_project_settings(self.projects_combo_box.currentText()).get("asset_creator") or {}
+        folder_types = settings.get("folder_types", [])
+
+        default_task_types = next(
+            (item["default_task_types"] for item in folder_types if item["name"] == self.type_combo_box.currentText()), None
+        ) or []
+        for check_box in self._task_checkboxes:
+            check_box.setChecked(False)
+            if check_box.text() in default_task_types:
+                check_box.setChecked(True)
+        return
+
     def project_changed(self):
         """Refresh the task checkboxes when the selected project changes.
 
@@ -231,6 +248,7 @@ class MainWindow(QtWidgets.QDialog):
             checkbox = QtWidgets.QCheckBox(task_name)
             self._tasks_layout.addWidget(checkbox)
             self._task_checkboxes.append(checkbox)
+        self.folder_type_changed()
 
     def _clear_tasks(self):
         """Remove all task checkboxes from the layout and the
@@ -360,8 +378,7 @@ class MainWindow(QtWidgets.QDialog):
         self.description_text_edit.clear()
         self.type_combo_box.clearEditText()
         self.image_drop_zone.clear()
-        for checkbox in self._task_checkboxes:
-            checkbox.setChecked(False)
+        self.folder_type_changed()
 
     def showEvent(self, event):
         super().showEvent(event)
