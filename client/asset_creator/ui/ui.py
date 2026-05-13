@@ -210,8 +210,13 @@ class MainWindow(QtWidgets.QDialog):
         folder_types = settings.get("folder_types", [])
 
         default_task_types = next(
-            (item["default_task_types"] for item in folder_types if item["name"] == self.type_combo_box.currentText()), None
-        ) or []
+            (
+                item.get("default_task_types", [])
+                for item in folder_types
+                if item["name"] == self.type_combo_box.currentText()
+            ),
+            []
+        )
         for check_box in self._task_checkboxes:
             check_box.setChecked(False)
             if check_box.text() in default_task_types:
@@ -501,7 +506,7 @@ class TagWidget(QtWidgets.QWidget):
         self.color_picker = ColorPickerButton(color)
         self.color_picker.color_changed.connect(self._apply_color)
 
-        remove_button = QtWidgets.QPushButton("?")
+        remove_button = QtWidgets.QPushButton("✕")
         remove_button.setObjectName("TagRemoveButton")
         remove_button.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         remove_button.setStyleSheet(
