@@ -188,7 +188,11 @@ class MainWindow(QtWidgets.QDialog):
         self.add_asset_button.setAutoDefault(False)
         self.add_asset_button.setDefault(False)
         self.add_asset_button.clicked.connect(self.create_asset)
+
+        self.create_more_checkbox = QtWidgets.QCheckBox("Create more")
+        buttons_layout.addWidget(self.create_more_checkbox)
         buttons_layout.addWidget(self.add_asset_button)
+
         main_layout.addLayout(buttons_layout)
 
     def _populate_projects(self):
@@ -359,6 +363,8 @@ class MainWindow(QtWidgets.QDialog):
 
         # Notify parent that an asset was created (even if some tasks failed)
         self.asset_created.emit()
+        if not self.create_more_checkbox.isChecked():
+            self.close()
 
     def _sync_project_tags(self, project_name, active_tags):
         """Merge the active tags into the project anatomy tags so that
