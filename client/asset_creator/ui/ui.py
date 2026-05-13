@@ -181,11 +181,10 @@ class MainWindow(QtWidgets.QDialog):
         buttons_layout.addWidget(self.refresh_button)
         buttons_layout.addStretch()
         self.add_asset_button = QtWidgets.QPushButton("Create Asset")
-        self.add_asset_button.clicked.connect(self.create_asset_and_close)
+        self.add_asset_button.clicked.connect(self.create_asset)
 
-        self.add_asset_and_more_button = QtWidgets.QPushButton("Create Asset and more")
-        self.add_asset_and_more_button.clicked.connect(self.create_asset)
-        buttons_layout.addWidget(self.add_asset_and_more_button)
+        self.create_more_checkbox = QtWidgets.QCheckBox("Create more")
+        buttons_layout.addWidget(self.create_more_checkbox)
         buttons_layout.addWidget(self.add_asset_button)
 
         main_layout.addLayout(buttons_layout)
@@ -268,11 +267,6 @@ class MainWindow(QtWidgets.QDialog):
         parent_folder = ayon_api.get_folder_by_path(project_name, parent_folder_path, fields=["id"])
         return parent_folder.get('id')
 
-    def create_asset_and_close(self):
-        asset_created = self.create_asset()
-        if asset_created:
-            self.close()
-
     def create_asset(self):
         """Create an asset folder in Ayon with the selected tasks.
 
@@ -349,7 +343,8 @@ class MainWindow(QtWidgets.QDialog):
 
         # Notify parent that an asset was created (even if some tasks failed)
         self.asset_created.emit()
-        return True
+        if not self.create_more_checkbox.isChecked():
+            self.close()
 
     def _show_error(self, message):
         """Display an error dialog with the given message."""
@@ -371,6 +366,7 @@ class MainWindow(QtWidgets.QDialog):
     def showEvent(self, event):
         super().showEvent(event)
         self._clear_user_inputs()
+
 
 def main():
     app = QtWidgets.QApplication(sys.argv)
