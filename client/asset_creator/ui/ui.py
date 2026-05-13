@@ -142,7 +142,8 @@ class MainWindow(QtWidgets.QDialog):
 
         self.type_combo_box = QtWidgets.QComboBox()
         form_layout.addRow("Asset Type", self.type_combo_box)
-
+        self.tags_widget = TagsWidget([])
+        form_layout.addRow("Tags", self.tags_widget)
         self.description_text_edit = QtWidgets.QTextEdit()
         self.description_text_edit.setPlaceholderText("Optional description...")
         self.description_text_edit.setMaximumHeight(60)
@@ -174,6 +175,8 @@ class MainWindow(QtWidgets.QDialog):
         )
         self.refresh_button.setToolTip("Refresh")
         self.refresh_button.setFlat(True)
+        self.refresh_button.setAutoDefault(False)
+        self.refresh_button.setDefault(False)
         self.refresh_button.setCursor(
             QtCore.Qt.CursorShape.PointingHandCursor
         )
@@ -181,6 +184,8 @@ class MainWindow(QtWidgets.QDialog):
         buttons_layout.addWidget(self.refresh_button)
         buttons_layout.addStretch()
         self.add_asset_button = QtWidgets.QPushButton("Create Asset")
+        self.add_asset_button.setAutoDefault(False)
+        self.add_asset_button.setDefault(False)
         self.add_asset_button.clicked.connect(self.create_asset)
         buttons_layout.addWidget(self.add_asset_button)
         main_layout.addLayout(buttons_layout)
@@ -212,6 +217,9 @@ class MainWindow(QtWidgets.QDialog):
         project_anatomy = ayon_api.get_project(project_name)
         asset_creator_settings = get_project_settings(project_name).get("asset_creator")
 
+        self.tags_widget.update_project_tags(project_anatomy["tags"])
+        self.tags_widget.clear_active_tags()
+
         # Refresh asset types from project folder types
         self.type_combo_box.clear()
         available_folder_types = [item["name"] for item in asset_creator_settings.get("folder_types")]
@@ -241,8 +249,12 @@ class MainWindow(QtWidgets.QDialog):
             cb.text() for cb in self._task_checkboxes if cb.isChecked()
         ]
 
+    def _get_active_tags(self):
+        """Return a fresh dict of the active tags as {name: hex_color}."""
+        return self.tags_widget.get_active_tags()
+
     def _get_parent_id_by_folder_type(self, folder_type: str):
-        """Get parent id from correspondance defined in project settings
+        """Get parent id from correspondence defined in project settings
         """
         project_name = self.projects_combo_box.currentText()
         folder_types = get_project_settings(project_name).get("asset_creator").get("folder_types")
@@ -254,14 +266,17 @@ class MainWindow(QtWidgets.QDialog):
             ]),None
         )
         if not parent_folder_path:
-            self._show_error(
-                (f"Can't find corresponding folder path for folders of type '{folder_type}'."
-                "Please check that this addon's projects settings are correctly defined.")
+            message = (
+                f"Can't find corresponding folder path for folders of type "
+                f"'{folder_type}'. Please check that this addon's projects "
+                f"settings are correctly defined."
             )
-            raise Exception
+            self._show_error(message)
+            raise RuntimeError(message)
 
         parent_folder = ayon_api.get_folder_by_path(project_name, parent_folder_path, fields=["id"])
-        return parent_folder.get('id')
+        if parent_folder:
+            return parent_folder.get('id')
 
     def create_asset(self):
         """Create an asset folder in Ayon with the selected tasks.
@@ -276,6 +291,7 @@ class MainWindow(QtWidgets.QDialog):
             return
 
         project_name = self.projects_combo_box.currentText()
+        active_tags = self._get_active_tags()
         tasks = self._get_checked_tasks()
         description = self.description_text_edit.toPlainText().strip()
 
@@ -283,17 +299,8 @@ class MainWindow(QtWidgets.QDialog):
         if description:
             attrib["description"] = description
 
-        # Upload thumbnail first to get its ID
-        thumbnail_id = None
-        thumbnail_path = self.image_drop_zone.image_path()
-        if thumbnail_path:
-            try:
-                thumbnail_id = ayon_api.create_thumbnail(
-                    project_name=project_name,
-                    src_filepath =thumbnail_path,
-                )
-            except Exception as e:
-                self._show_error(f"Failed to upload thumbnail: {e}")
+        self._sync_project_tags(project_name, active_tags)
+        thumbnail_id = self._upload_thumbnail(project_name)
 
         folder_type = self.type_combo_box.currentText()
         try:
@@ -304,6 +311,7 @@ class MainWindow(QtWidgets.QDialog):
                 parent_id=self._get_parent_id_by_folder_type(folder_type),
                 attrib=attrib,
                 thumbnail_id=thumbnail_id,
+                tags=list(active_tags.keys()),
             )
         except ayon_api.exceptions.HTTPRequestError as e:
             if e.response.status_code == 409:
@@ -314,18 +322,7 @@ class MainWindow(QtWidgets.QDialog):
                 self._show_error(str(e))
             return
 
-        failed_tasks = []
-        for task in tasks:
-            try:
-                ayon_api.create_task(
-                    project_name=project_name,
-                    name=task,
-                    task_type=task,
-                    folder_id=folder_id,
-                )
-            except ayon_api.exceptions.HTTPRequestError:
-                failed_tasks.append(task)
-
+        failed_tasks = self._create_tasks(project_name, folder_id, tasks)
         if failed_tasks:
             self._show_error(
                 f"Asset '{asset_name}' created but these tasks "
@@ -339,6 +336,59 @@ class MainWindow(QtWidgets.QDialog):
 
         # Notify parent that an asset was created (even if some tasks failed)
         self.asset_created.emit()
+
+    def _sync_project_tags(self, project_name, active_tags):
+        """Merge the active tags into the project anatomy tags so that
+        their colors are remembered for next time."""
+        current_settings = ayon_api.get_project(project_name)
+        new_tags = self.merge_tags(
+            current_settings["tags"],
+            [{"name": name, "color": color} for name, color in active_tags.items()],
+        )
+        # Reset existing tags first, as their color is not updated when the tag already exists,
+        # even if the new tag specifies a different color
+        ayon_api.update_project(project_name, tags=[])
+        ayon_api.update_project(project_name, tags=new_tags)
+
+    def _upload_thumbnail(self, project_name):
+        """Upload the thumbnail image if one was dropped. Returns the
+        thumbnail id on success, None otherwise."""
+        thumbnail_path = self.image_drop_zone.image_path()
+        if not thumbnail_path:
+            return None
+        try:
+            return ayon_api.create_thumbnail(
+                project_name=project_name,
+                src_filepath=thumbnail_path,
+            )
+        except Exception as e:
+            self._show_error(f"Failed to upload thumbnail: {e}")
+            return None
+
+    def _create_tasks(self, project_name, folder_id, tasks):
+        """Create the requested tasks under the given folder. Returns
+        the list of task names that failed to be created."""
+        failed = []
+        for task in tasks:
+            try:
+                ayon_api.create_task(
+                    project_name=project_name,
+                    name=task,
+                    task_type=task,
+                    folder_id=folder_id,
+                )
+            except ayon_api.exceptions.HTTPRequestError:
+                failed.append(task)
+        return failed
+
+    @staticmethod
+    def merge_tags(existing_list, new_list):
+        """Merge two lists of {name, color} dicts. Entries in `new_list`
+        override entries with the same name in `existing_list`."""
+        merged = {tag["name"]: tag["color"] for tag in existing_list}
+        for tag in new_list:
+            merged[tag["name"]] = tag["color"]
+        return [{"name": name, "color": color} for name, color in merged.items()]
 
     def _show_error(self, message):
         """Display an error dialog with the given message."""
@@ -356,10 +406,223 @@ class MainWindow(QtWidgets.QDialog):
         self.image_drop_zone.clear()
         for checkbox in self._task_checkboxes:
             checkbox.setChecked(False)
+        self._clear_tags()
+
+    def _clear_tags(self):
+        self.tags_widget.clear_active_tags()
 
     def showEvent(self, event):
         super().showEvent(event)
         self._clear_user_inputs()
+
+
+class ColorPickerButton(QtWidgets.QPushButton):
+    """Round button that displays a color and opens a color dialog when
+    clicked.
+    Emits`color_changed` when the user picks a new color."""
+
+    color_changed = QtCore.Signal(QtGui.QColor)
+
+    def __init__(self, color: QtGui.QColor, parent=None):
+        super().__init__(parent)
+        self._color = QtGui.QColor(color)
+        self.setObjectName("ColorPickerButton")
+        self.setFixedSize(18, 18)
+        self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        self.setToolTip("Pick a color")
+        self.clicked.connect(self._pick_color)
+        self._refresh_style()
+
+    def color(self) -> QtGui.QColor:
+        return QtGui.QColor(self._color)
+
+    def set_color(self, color: QtGui.QColor):
+        self._color = QtGui.QColor(color)
+        self._refresh_style()
+        self.color_changed.emit(self._color)
+
+    def _refresh_style(self):
+        self.setStyleSheet(
+            "QPushButton#ColorPickerButton {"
+            f"  background: {self._color.name()};"
+            "  border: 1px solid rgba(0, 0, 0, 80);"
+            "  border-radius: 9px;"
+            "}"
+            "QPushButton#ColorPickerButton:hover {"
+            "  border: 1px solid white;"
+            "}"
+        )
+
+    def _pick_color(self):
+        color = QtWidgets.QColorDialog.getColor(
+            self._color, self, "Pick tag color"
+        )
+        if color.isValid():
+            self.set_color(color)
+
+
+class TagWidget(QtWidgets.QWidget):
+    """A removable tag displayed as a colored rounded label, with a
+    color picker to change its color and a button to remove it."""
+
+    removed = QtCore.Signal(str)
+
+    def __init__(self, text, color: QtGui.QColor, parent=None):
+        super().__init__(parent)
+
+        self.text = text
+
+        layout = QtWidgets.QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+
+        self.tag_label = QtWidgets.QLabel(text)
+        self.tag_label.setObjectName("TagLabel")
+
+        self.tag_label.setContentsMargins(8, 2, 8, 2)
+
+        self.color_picker = ColorPickerButton(color)
+        self.color_picker.color_changed.connect(self._apply_color)
+
+        remove_button = QtWidgets.QPushButton("✕")
+        remove_button.setObjectName("TagRemoveButton")
+        remove_button.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        remove_button.setStyleSheet(
+            "QPushButton#TagRemoveButton { background-color: none; }"
+        )
+        remove_button.clicked.connect(self._on_remove_clicked)
+
+        layout.addWidget(self.tag_label)
+        layout.addStretch()
+        layout.addWidget(self.color_picker)
+        layout.addWidget(remove_button)
+
+        self.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Preferred,
+            QtWidgets.QSizePolicy.Policy.Fixed,
+        )
+
+        self._apply_color(color)
+
+    def _apply_color(self, color: QtGui.QColor):
+        self.tag_label.setStyleSheet(
+            "QLabel#TagLabel {"
+            f"  background: {color.name()};"
+            "  border-radius: 10px;"
+            "  color: white;"
+            "  padding: 2px 8px;"
+            "}"
+        )
+
+    def color(self) -> QtGui.QColor:
+        return self.color_picker.color()
+
+    def _on_remove_clicked(self):
+        self.removed.emit(self.text)
+        self.deleteLater()
+
+
+class TagLineEdit(QtWidgets.QLineEdit):
+    """Line edit that opens its completer popup with all entries on
+    focus-in and on mouse press, so the user can browse suggestions
+    without having to type first."""
+
+    def show_all_completions(self):
+        if self.completer():
+            self.completer().setCompletionPrefix("")
+            self.completer().complete()
+
+    def focusInEvent(self, event):
+        super().focusInEvent(event)
+        self.show_all_completions()
+
+    def mousePressEvent(self, event):
+        super().mousePressEvent(event)
+        self.show_all_completions()
+
+
+class TagsWidget(QtWidgets.QWidget):
+    """Input field with auto-completion that lets the user build a list
+    of colored tags. Each tag is displayed on its own row with a color
+    picker and a remove button. Suggestions and preselected colors come
+    from the project tags passed via update_project_tags method."""
+
+    DEFAULT_COLOR = "#4a90e2"  # light blue
+
+    def __init__(self, project_tags):
+        super().__init__()
+        self.project_tags = {}  # name -> hex color from project anatomy
+        self.active_tags = {}  # name -> TagWidget currently displayed
+
+        main_layout = QtWidgets.QVBoxLayout(self)
+
+        self.tags_layout = QtWidgets.QVBoxLayout()
+        self.tags_layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop)
+        main_layout.addLayout(self.tags_layout)
+
+        self.tag_line_edit = TagLineEdit()
+        self.tag_line_edit.setPlaceholderText("Add a tag...")
+        main_layout.addWidget(self.tag_line_edit)
+
+        self.completer_model = QtCore.QStringListModel()
+        self.completer = QtWidgets.QCompleter()
+        self.completer.setModel(self.completer_model)
+        self.completer.setCaseSensitivity(QtCore.Qt.CaseSensitivity.CaseInsensitive)
+        self.completer.setFilterMode(QtCore.Qt.MatchFlag.MatchContains)
+        self.completer.activated.connect(self.completer_pressed)
+
+        self.tag_line_edit.setCompleter(self.completer)
+        self.tag_line_edit.returnPressed.connect(self.add_current_tag)
+
+        self.update_project_tags(project_tags)
+
+    def completer_pressed(self, text):
+        self.add_tag(text, self.project_tags.get(text))
+        # Clear after Qt finished to complete the line edit
+        QtCore.QTimer.singleShot(0, self.tag_line_edit.clear)
+
+    def add_current_tag(self):
+        text = self.tag_line_edit.text().strip()
+        if text:
+            self.add_tag(text=text, color=self.project_tags.get(text))
+        self.tag_line_edit.clear()
+
+    def add_tag(self, text, color=None):
+        text = text.strip()
+        if not text or text in self.active_tags:
+            return
+        if color is None:
+            color = self.DEFAULT_COLOR
+
+        tag_widget = TagWidget(text, QtGui.QColor(color))
+        tag_widget.removed.connect(self._on_tag_removed)
+        self.active_tags[text] = tag_widget
+        self.tags_layout.addWidget(tag_widget)
+
+    def _on_tag_removed(self, text):
+        self.active_tags.pop(text, None)
+
+    def get_active_tags(self):
+        """Return a fresh dict of the active tags as {name: hex_color},
+        reading the current color from each widget so changes made via
+        the color picker are reflected."""
+        return {
+            name: widget.color().name()
+            for name, widget in self.active_tags.items()
+        }
+
+    def update_project_tags(self, project_tags):
+        self.project_tags = {
+            tag["name"]: tag.get("color")
+            for tag in project_tags
+        }
+        self.completer_model.setStringList(list(self.project_tags.keys()))
+
+    def clear_active_tags(self):
+        for tag_widget in list(self.active_tags.values()):
+            tag_widget.deleteLater()
+        self.active_tags.clear()
+
 
 def main():
     app = QtWidgets.QApplication(sys.argv)
