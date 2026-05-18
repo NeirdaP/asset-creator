@@ -158,6 +158,13 @@ class MainWindow(QtWidgets.QDialog):
         self._clear_tasks()
 
         project_anatomy = ayon_api.get_project(project_name)
+
+        # Prevent crash if we try to fetch an anatomy from a project that the user can't access
+        if not project_anatomy:
+            projects = ayon_api.get_projects()
+            project_anatomy = next(projects)
+            self.projects_combo_box.setCurrentText(project_anatomy.get("name"))
+
         asset_creator_settings = get_project_settings(project_name).get("asset_creator")
 
         self.tags_widget.update_project_tags(project_anatomy["tags"])
