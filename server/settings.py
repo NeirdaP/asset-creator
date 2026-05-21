@@ -3,18 +3,9 @@ from ayon_server.settings.enum import folder_types_enum
 from ayon_server.settings.enum import task_types_enum
 
 
-class FolderTypeToParentItem(BaseSettingsModel):
-    _layout = "compact"
+class TasksTemplateGroup(BaseSettingsModel):
     name: str = SettingsField(
-        title="Folder type",
-        enum_resolver=folder_types_enum
-    )
-    parent_folder: str = SettingsField(
-        "",
-        title="Parent folder",
-        description=(
-            "Folder in which the new asset will be created"
-        ),
+        title="Name",
     )
     default_task_types: list[str] = SettingsField(
         title="Default task types",
@@ -25,12 +16,31 @@ class FolderTypeToParentItem(BaseSettingsModel):
     )
 
 
+class FolderTypeGroup(BaseSettingsModel):
+    name: str = SettingsField(
+        enum_resolver=folder_types_enum,
+    )
+    parent_folder: str = SettingsField(
+        description=(
+            "Folder in which the new asset will be created"
+        )
+    )
+    tasks_templates: list[TasksTemplateGroup] = SettingsField(
+        default=[{
+            "name": "Default",
+            "default_task_types": []
+        }],
+        description=(
+            "Different task templates for this folder"
+        ),
+    )
+
+
 class AssetCreatorSettings(BaseSettingsModel):
     """Asset Creator settings."""
 
-    folder_types: list[FolderTypeToParentItem] = SettingsField(
-        default_factory=FolderTypeToParentItem,
-        title="Folder Types",
+    folder_types: list[FolderTypeGroup] = SettingsField(
+        default_factory=list,
         description=(
             "Folder types from the project anatomy that will be available "
             "for the user when they create a new asset"

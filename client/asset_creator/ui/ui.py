@@ -144,6 +144,10 @@ class MainWindow(QtWidgets.QDialog):
         self.type_combo_box.currentTextChanged.connect(self.folder_type_changed)
         form_layout.addRow("Asset Type", self.type_combo_box)
 
+        self.tasks_template_combo_box = QtWidgets.QComboBox()
+        self.tasks_template_combo_box.currentTextChanged.connect(self.tasks_template_changed)
+        form_layout.addRow("Tasks Template", self.tasks_template_combo_box)
+
         self.description_text_edit = QtWidgets.QTextEdit()
         self.description_text_edit.setPlaceholderText("Optional description...")
         self.description_text_edit.setMaximumHeight(60)
@@ -205,17 +209,47 @@ class MainWindow(QtWidgets.QDialog):
         """
         Select default task types for the new folder type found in the project settings
         """
-        settings = get_project_settings(self.projects_combo_box.currentText()).get("asset_creator") or {}
-        folder_types = settings.get("folder_types", [])
+        tasks_templates_names = self._get_tasks_templates_names_for_selected_folder_type()
+        self.tasks_template_combo_box.clear()
+        self.tasks_template_combo_box.addItems(tasks_templates_names)
 
-        default_task_types = next(
-            (item["default_task_types"] for item in folder_types if item["name"] == self.type_combo_box.currentText()), None
-        ) or []
+    def tasks_template_changed(self):
+        """
+
+        """
+        selected_tasks_template_data = self._get_selected_tasks_template_data()
+
         for check_box in self._task_checkboxes:
             check_box.setChecked(False)
-            if check_box.text() in default_task_types:
+            if check_box.text() in selected_tasks_template_data.get("default_task_types", []):
                 check_box.setChecked(True)
         return
+
+    def _get_selected_folder_type_data(self):
+        settings = get_project_settings(self.projects_combo_box.currentText()).get("asset_creator") or {}
+        selected_folder_type = self.type_combo_box.currentText()
+
+        folder_types_data = settings.get("folder_types", [])
+        folder_type_data = next(
+            (item for item in folder_types_data if item["name"] == selected_folder_type), {}
+        )
+        return folder_type_data
+
+    def _get_selected_tasks_template_data(self):
+        selected_tasks_template = self.tasks_template_combo_box.currentText()
+        folder_type_data = self._get_selected_folder_type_data()
+        tasks_templates_data = folder_type_data.get("tasks_templates", [])
+        task_template_data = next(
+            (item for item in tasks_templates_data if item["name"] == selected_tasks_template), {}
+        )
+
+        return task_template_data
+
+    def _get_tasks_templates_names_for_selected_folder_type(self):
+        folder_type_data = self._get_selected_folder_type_data()
+        print("AAAAAAAAA")
+        print(folder_type_data)
+        return [item["name"] for item in folder_type_data.get("tasks_templates", {})]
 
     def project_changed(self):
         """Refresh the task checkboxes when the selected project changes.
@@ -238,7 +272,7 @@ class MainWindow(QtWidgets.QDialog):
             project_anatomy = next(projects)
             self.projects_combo_box.setCurrentText(project_anatomy.get("name"))
 
-        asset_creator_settings = get_project_settings(project_name).get("asset_creator")
+        asset_creator_settings = get_project_settings(project_name).get(F"asset_creator")
 
         # Refresh asset types from project folder types
         self.type_combo_box.clear()
@@ -290,6 +324,13 @@ class MainWindow(QtWidgets.QDialog):
             raise Exception
 
         parent_folder = ayon_api.get_folder_by_path(project_name, parent_folder_path, fields=["id"])
+        if not parent_folder:
+            self._show_error(
+                (f"Can't find folder at path '{parent_folder_path}'."
+                 "Please check that this addon's projects settings are correctly defined.")
+            )
+            raise Exception
+
         return parent_folder.get('id')
 
     def create_asset(self):
