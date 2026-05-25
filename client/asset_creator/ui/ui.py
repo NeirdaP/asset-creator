@@ -217,7 +217,7 @@ class MainWindow(QtWidgets.QDialog):
         """
 
         """
-        selected_tasks_template_data = self._get_selected_tasks_template_data()
+        selected_tasks_template_data = self._get_selected_tasks_template_project_settings()
 
         for check_box in self._task_checkboxes:
             check_box.setChecked(False)
@@ -225,7 +225,7 @@ class MainWindow(QtWidgets.QDialog):
                 check_box.setChecked(True)
         return
 
-    def _get_selected_folder_type_data(self):
+    def _get_selected_folder_type_project_settings(self):
         settings = get_project_settings(self.projects_combo_box.currentText()).get("asset_creator") or {}
         selected_folder_type = self.type_combo_box.currentText()
 
@@ -235,9 +235,9 @@ class MainWindow(QtWidgets.QDialog):
         )
         return folder_type_data
 
-    def _get_selected_tasks_template_data(self):
+    def _get_selected_tasks_template_project_settings(self):
         selected_tasks_template = self.tasks_template_combo_box.currentText()
-        folder_type_data = self._get_selected_folder_type_data()
+        folder_type_data = self._get_selected_folder_type_project_settings()
         tasks_templates_data = folder_type_data.get("tasks_templates", [])
         task_template_data = next(
             (item for item in tasks_templates_data if item["name"] == selected_tasks_template), {}
@@ -246,9 +246,7 @@ class MainWindow(QtWidgets.QDialog):
         return task_template_data
 
     def _get_tasks_templates_names_for_selected_folder_type(self):
-        folder_type_data = self._get_selected_folder_type_data()
-        print("AAAAAAAAA")
-        print(folder_type_data)
+        folder_type_data = self._get_selected_folder_type_project_settings()
         return [item["name"] for item in folder_type_data.get("tasks_templates", {})]
 
     def project_changed(self):
@@ -272,7 +270,7 @@ class MainWindow(QtWidgets.QDialog):
             project_anatomy = next(projects)
             self.projects_combo_box.setCurrentText(project_anatomy.get("name"))
 
-        asset_creator_settings = get_project_settings(project_name).get(F"asset_creator")
+        asset_creator_settings = get_project_settings(project_name).get("asset_creator")
 
         # Refresh asset types from project folder types
         self.type_combo_box.clear()
