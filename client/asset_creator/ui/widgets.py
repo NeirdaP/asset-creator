@@ -220,7 +220,7 @@ class TagsWidget(QtWidgets.QWidget):
 
     def __init__(self, project_tags):
         super().__init__()
-        self.project_tags = {}  # name -> hex color from project anatomy
+        self.available_project_tags = {}  # name -> hex color from project anatomy
         self.active_tags = {}  # name -> TagWidget currently displayed
 
         main_layout = QtWidgets.QVBoxLayout(self)
@@ -243,17 +243,17 @@ class TagsWidget(QtWidgets.QWidget):
         self.tag_line_edit.setCompleter(self.completer)
         self.tag_line_edit.returnPressed.connect(self.add_current_tag)
 
-        self.update_project_tags(project_tags)
+        self.update_available_project_tags(project_tags)
 
     def completer_pressed(self, text):
-        self.add_tag(text, self.project_tags.get(text))
+        self.add_tag(text, self.available_project_tags.get(text))
         # Clear after Qt finished to complete the line edit
         QtCore.QTimer.singleShot(0, self.tag_line_edit.clear)
 
     def add_current_tag(self):
         text = self.tag_line_edit.text().strip()
         if text:
-            self.add_tag(text=text, color=self.project_tags.get(text))
+            self.add_tag(text=text, color=self.available_project_tags.get(text))
         self.tag_line_edit.clear()
 
     def add_tag(self, text, color=None):
@@ -280,12 +280,12 @@ class TagsWidget(QtWidgets.QWidget):
             for name, widget in self.active_tags.items()
         }
 
-    def update_project_tags(self, project_tags):
-        self.project_tags = {
+    def update_available_project_tags(self, project_tags):
+        self.available_project_tags = {
             tag["name"]: tag.get("color")
             for tag in project_tags
         }
-        self.completer_model.setStringList(list(self.project_tags.keys()))
+        self.completer_model.setStringList(list(self.available_project_tags.keys()))
 
     def clear_active_tags(self):
         for tag_widget in list(self.active_tags.values()):

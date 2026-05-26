@@ -150,6 +150,7 @@ class MainWindow(QtWidgets.QDialog):
         Fetches task types from the new project's settings and
         creates a checkbox for each one inside the scroll area.
         """
+        print("REFRSHING")
         project_name = self.projects_combo_box.currentText()
         if not project_name:
             return
@@ -167,8 +168,8 @@ class MainWindow(QtWidgets.QDialog):
 
         asset_creator_settings = get_project_settings(project_name).get("asset_creator")
 
-        self.tags_widget.update_project_tags(project_anatomy["tags"])
-        self.tags_widget.clear_active_tags()
+        self.update_available_project_tags()
+        self._clear_active_tags()
 
         # Refresh asset types from project folder types
         self.type_combo_box.clear()
@@ -283,6 +284,7 @@ class MainWindow(QtWidgets.QDialog):
             self._show_success(
                 f"Successfully created asset '{asset_name}'"
             )
+            self.update_available_project_tags()
             self._clear_user_inputs()
 
         # Notify parent that an asset was created (even if some tasks failed)
@@ -358,14 +360,20 @@ class MainWindow(QtWidgets.QDialog):
         self.type_combo_box.clearEditText()
         self.image_drop_zone.clear()
         self.folder_type_changed()
-        self._clear_tags()
+        self._clear_active_tags()
 
-    def _clear_tags(self):
+    def _clear_active_tags(self):
         self.tags_widget.clear_active_tags()
 
     def showEvent(self, event):
         super().showEvent(event)
         self._clear_user_inputs()
+
+    def update_available_project_tags(self):
+        project_name = self.projects_combo_box.currentText()
+        project_anatomy = ayon_api.get_project(project_name)
+
+        self.tags_widget.update_available_project_tags(project_anatomy["tags"])
 
 
 def main():
