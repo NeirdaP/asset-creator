@@ -150,7 +150,6 @@ class MainWindow(QtWidgets.QDialog):
         Fetches task types from the new project's settings and
         creates a checkbox for each one inside the scroll area.
         """
-        print("REFRSHING")
         project_name = self.projects_combo_box.currentText()
         if not project_name:
             return
