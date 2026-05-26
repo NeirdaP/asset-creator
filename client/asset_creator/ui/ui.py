@@ -5,91 +5,8 @@ from ayon_core.style import load_stylesheet
 from ayon_core.settings import get_project_settings
 from qtpy import QtWidgets, QtCore, QtGui
 
+from . widgets import ImageDropZone, TagsWidget
 from . import images
-
-
-class ImageDropZone(QtWidgets.QLabel):
-    """Drop zone widget that accepts image files via drag & drop or click.
-
-    Displays a preview of the dropped image or a placeholder message.
-    """
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._image_path = None
-        self.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        self.setMinimumHeight(100)
-        self.setMaximumHeight(120)
-        self.setAcceptDrops(True)
-        self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
-        self.setStyleSheet(
-            "QLabel {"
-            "  border: 2px dashed rgb(120, 130, 140);"
-            "  border-radius: 5px;"
-            "  color: rgb(160, 170, 180);"
-            "  font-size: 11px;"
-            "}"
-        )
-        self._set_placeholder()
-
-    def _set_placeholder(self):
-        """Display the default placeholder text."""
-        self.setText("Drop an image here\nor click to browse")
-        self._image_path = None
-
-    def image_path(self):
-        """Return the path of the currently loaded image, or None."""
-        return self._image_path
-
-    def _load_image(self, path):
-        """Load and display an image from the given file path."""
-        pixmap = QtGui.QPixmap(path)
-        if pixmap.isNull():
-            return
-        self._image_path = path
-        scaled = pixmap.scaled(
-            self.size(),
-            QtCore.Qt.AspectRatioMode.KeepAspectRatio,
-            QtCore.Qt.TransformationMode.SmoothTransformation,
-        )
-        self.setPixmap(scaled)
-
-    def mousePressEvent(self, event):
-        """Open a file dialog to select an image on click."""
-        path, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self, "Select Image", "",
-            "Images (*.png *.jpg *.jpeg *.bmp *.gif *.webp)"
-        )
-        if path:
-            self._load_image(path)
-
-    def dragEnterEvent(self, event):
-        """Accept the drag if it contains image file URLs."""
-        if event.mimeData().hasUrls():
-            event.acceptProposedAction()
-        else:
-            event.ignore()
-
-    def dragMoveEvent(self, event):
-        if event.mimeData().hasUrls():
-            event.acceptProposedAction()
-        else:
-            event.ignore()
-
-    def dropEvent(self, event):
-        """Load the first dropped image file."""
-        for url in event.mimeData().urls():
-            path = url.toLocalFile()
-            if path:
-                self._load_image(path)
-                event.acceptProposedAction()
-                return
-        event.ignore()
-
-    def clear(self):
-        """Reset the drop zone to its placeholder state."""
-        super().clear()
-        self._set_placeholder()
 
 
 class MainWindow(QtWidgets.QDialog):
@@ -143,7 +60,8 @@ class MainWindow(QtWidgets.QDialog):
         self.type_combo_box = QtWidgets.QComboBox()
         self.type_combo_box.currentTextChanged.connect(self.folder_type_changed)
         form_layout.addRow("Asset Type", self.type_combo_box)
-
+        self.tags_widget = TagsWidget([])
+        form_layout.addRow("Tags", self.tags_widget)
         self.tasks_template_combo_box = QtWidgets.QComboBox()
         self.tasks_template_combo_box.currentTextChanged.connect(self.tasks_template_changed)
         form_layout.addRow("Tasks Template", self.tasks_template_combo_box)
@@ -179,6 +97,8 @@ class MainWindow(QtWidgets.QDialog):
         )
         self.refresh_button.setToolTip("Refresh")
         self.refresh_button.setFlat(True)
+        self.refresh_button.setAutoDefault(False)
+        self.refresh_button.setDefault(False)
         self.refresh_button.setCursor(
             QtCore.Qt.CursorShape.PointingHandCursor
         )
@@ -186,6 +106,8 @@ class MainWindow(QtWidgets.QDialog):
         buttons_layout.addWidget(self.refresh_button)
         buttons_layout.addStretch()
         self.add_asset_button = QtWidgets.QPushButton("Create Asset")
+        self.add_asset_button.setAutoDefault(False)
+        self.add_asset_button.setDefault(False)
         self.add_asset_button.clicked.connect(self.create_asset)
 
         self.create_more_checkbox = QtWidgets.QCheckBox("Create more")
@@ -272,6 +194,9 @@ class MainWindow(QtWidgets.QDialog):
 
         asset_creator_settings = get_project_settings(project_name).get("asset_creator")
 
+        self.update_available_project_tags()
+        self._clear_active_tags()
+
         # Refresh asset types from project folder types
         self.type_combo_box.clear()
         available_folder_types = [item["name"] for item in asset_creator_settings.get("folder_types")]
@@ -302,8 +227,12 @@ class MainWindow(QtWidgets.QDialog):
             cb.text() for cb in self._task_checkboxes if cb.isChecked()
         ]
 
+    def _get_active_tags(self):
+        """Return a fresh dict of the active tags as {name: hex_color}."""
+        return self.tags_widget.get_active_tags()
+
     def _get_parent_id_by_folder_type(self, folder_type: str):
-        """Get parent id from correspondance defined in project settings
+        """Get parent id from correspondence defined in project settings
         """
         project_name = self.projects_combo_box.currentText()
         folder_types = get_project_settings(project_name).get("asset_creator").get("folder_types")
@@ -315,11 +244,13 @@ class MainWindow(QtWidgets.QDialog):
             ]),None
         )
         if not parent_folder_path:
-            self._show_error(
-                (f"Can't find corresponding folder path for folders of type '{folder_type}'."
-                "Please check that this addon's projects settings are correctly defined.")
+            message = (
+                f"Can't find corresponding folder path for folders of type "
+                f"'{folder_type}'. Please check that this addon's projects "
+                f"settings are correctly defined."
             )
-            raise Exception
+            self._show_error(message)
+            raise RuntimeError(message)
 
         parent_folder = ayon_api.get_folder_by_path(project_name, parent_folder_path, fields=["id"])
         if not parent_folder:
@@ -344,6 +275,7 @@ class MainWindow(QtWidgets.QDialog):
             return
 
         project_name = self.projects_combo_box.currentText()
+        active_tags = self._get_active_tags()
         tasks = self._get_checked_tasks()
         description = self.description_text_edit.toPlainText().strip()
 
@@ -351,17 +283,8 @@ class MainWindow(QtWidgets.QDialog):
         if description:
             attrib["description"] = description
 
-        # Upload thumbnail first to get its ID
-        thumbnail_id = None
-        thumbnail_path = self.image_drop_zone.image_path()
-        if thumbnail_path:
-            try:
-                thumbnail_id = ayon_api.create_thumbnail(
-                    project_name=project_name,
-                    src_filepath =thumbnail_path,
-                )
-            except Exception as e:
-                self._show_error(f"Failed to upload thumbnail: {e}")
+        self._sync_project_tags(project_name, active_tags)
+        thumbnail_id = self._upload_thumbnail(project_name)
 
         folder_type = self.type_combo_box.currentText()
         try:
@@ -372,6 +295,7 @@ class MainWindow(QtWidgets.QDialog):
                 parent_id=self._get_parent_id_by_folder_type(folder_type),
                 attrib=attrib,
                 thumbnail_id=thumbnail_id,
+                tags=list(active_tags.keys()),
             )
         except ayon_api.exceptions.HTTPRequestError as e:
             if e.response.status_code == 409:
@@ -382,18 +306,7 @@ class MainWindow(QtWidgets.QDialog):
                 self._show_error(str(e))
             return
 
-        failed_tasks = []
-        for task in tasks:
-            try:
-                ayon_api.create_task(
-                    project_name=project_name,
-                    name=task,
-                    task_type=task,
-                    folder_id=folder_id,
-                )
-            except ayon_api.exceptions.HTTPRequestError:
-                failed_tasks.append(task)
-
+        failed_tasks = self._create_tasks(project_name, folder_id, tasks)
         if failed_tasks:
             self._show_error(
                 f"Asset '{asset_name}' created but these tasks "
@@ -403,12 +316,66 @@ class MainWindow(QtWidgets.QDialog):
             self._show_success(
                 f"Successfully created asset '{asset_name}'"
             )
+            self.update_available_project_tags()
             self._clear_user_inputs()
 
         # Notify parent that an asset was created (even if some tasks failed)
         self.asset_created.emit()
         if not self.create_more_checkbox.isChecked():
             self.close()
+
+    def _sync_project_tags(self, project_name, active_tags):
+        """Merge the active tags into the project anatomy tags so that
+        their colors are remembered for next time."""
+        current_settings = ayon_api.get_project(project_name)
+        new_tags = self.merge_tags(
+            current_settings["tags"],
+            [{"name": name, "color": color} for name, color in active_tags.items()],
+        )
+        # Reset existing tags first, as their color is not updated when the tag already exists,
+        # even if the new tag specifies a different color
+        ayon_api.update_project(project_name, tags=[])
+        ayon_api.update_project(project_name, tags=new_tags)
+
+    def _upload_thumbnail(self, project_name):
+        """Upload the thumbnail image if one was dropped. Returns the
+        thumbnail id on success, None otherwise."""
+        thumbnail_path = self.image_drop_zone.image_path()
+        if not thumbnail_path:
+            return None
+        try:
+            return ayon_api.create_thumbnail(
+                project_name=project_name,
+                src_filepath=thumbnail_path,
+            )
+        except Exception as e:
+            self._show_error(f"Failed to upload thumbnail: {e}")
+            return None
+
+    def _create_tasks(self, project_name, folder_id, tasks):
+        """Create the requested tasks under the given folder. Returns
+        the list of task names that failed to be created."""
+        failed = []
+        for task in tasks:
+            try:
+                ayon_api.create_task(
+                    project_name=project_name,
+                    name=task,
+                    task_type=task,
+                    folder_id=folder_id,
+                )
+            except ayon_api.exceptions.HTTPRequestError:
+                failed.append(task)
+        return failed
+
+    @staticmethod
+    def merge_tags(existing_list, new_list):
+        """Merge two lists of {name, color} dicts. Entries in `new_list`
+        override entries with the same name in `existing_list`."""
+        merged = {tag["name"]: tag["color"] for tag in existing_list}
+        for tag in new_list:
+            merged[tag["name"]] = tag["color"]
+        return [{"name": name, "color": color} for name, color in merged.items()]
 
     def _show_error(self, message):
         """Display an error dialog with the given message."""
@@ -425,10 +392,20 @@ class MainWindow(QtWidgets.QDialog):
         self.type_combo_box.clearEditText()
         self.image_drop_zone.clear()
         self.folder_type_changed()
+        self._clear_active_tags()
+
+    def _clear_active_tags(self):
+        self.tags_widget.clear_active_tags()
 
     def showEvent(self, event):
         super().showEvent(event)
         self._clear_user_inputs()
+
+    def update_available_project_tags(self):
+        project_name = self.projects_combo_box.currentText()
+        project_anatomy = ayon_api.get_project(project_name)
+
+        self.tags_widget.update_available_project_tags(project_anatomy["tags"])
 
 
 def main():
