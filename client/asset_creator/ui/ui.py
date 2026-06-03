@@ -286,8 +286,9 @@ class MainWindow(QtWidgets.QDialog):
         # Quick Fix for RRX (should be more modular by storing some data in the Project Settings for example)
         # Define attribute "Production Category" on asset creation
         production_categories = ayon_api.get_attributes_for_type(entity_type="folder")["productionCategoryRrx"]["enum"]
-        production_category = [c for c in production_categories if c["label"] == self.tasks_template_combo_box.currentText()][0]["value"]
-        attrib["productionCategoryRrx"] = production_category
+        production_category = [c for c in production_categories if c["label"] == self.tasks_template_combo_box.currentText()]
+        if production_category:
+            attrib["productionCategoryRrx"] = production_category[0]["value"]
 
         self._sync_project_tags(project_name, active_tags)
         thumbnail_id = self._upload_thumbnail(project_name)
